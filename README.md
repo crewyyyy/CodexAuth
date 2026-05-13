@@ -65,7 +65,7 @@ When running `acodex select` without arguments, an interactive menu appears:
 ```
   Select profile:
 
-  ▶ ignatismailov666 (current)
+  ▶ account1 (current)
     work
     personal
 
