@@ -1,0 +1,119 @@
+#!/bin/bash
+# acodex-refresh — refresh tokens for all Codex profiles
+
+CODEX_DIR="${CODEX_DIR:-$HOME/.codex}"
+PROFILES_DIR="$CODEX_DIR/profiles"
+AUTH_FILE="$CODEX_DIR/auth.json"
+LOG_FILE="$CODEX_DIR/logs/acodex-refresh.log"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+}
+
+refresh_profile() {
+    local profile="$1"
+    local auth_path="$PROFILES_DIR/${profile}.json"
+
+    if [[ ! -f "$auth_path" ]]; then
+        return 1
+    fi
+
+    local refresh_token
+    refresh_token=$(python3 -c "import json; print(json.load(open('$auth_path'))['tokens'].get('refresh_token', ''))" 2>/dev/null)
+
+    if [[ -z "$refresh_token" ]]; then
+        log "SKIP $profile: no refresh_token"
+        return 1
+    fi
+
+    local current
+    current=$(cat "$PROFILES_DIR/.current" 2>/dev/null || echo "")
+
+    if [[ "$profile" != "$current" ]]; then
+        cp "$auth_path" "$AUTH_FILE"
+    fi
+
+    local client_id="app_EMoaEEZ73f0CkXaXp7hranN"
+    local client_secret=""
+
+    local response
+    response=$(curl -s -X POST "https://auth.openai.com/oauth/token" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "grant_type=refresh_token" \
+        -d "refresh_token=$refresh_token" \
+        -d "client_id=$client_id" \
+        2>/dev/null)
+
+    local new_access_token
+    local new_refresh_token
+    local new_id_token
+    local error
+
+    new_access_token=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token', ''))" 2>/dev/null)
+    error=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error', ''))" 2>/dev/null)
+
+    if [[ -n "$error" ]]; then
+        log "ERROR $profile: $error"
+        if [[ "$profile" != "$current" ]]; then
+            cp "$PROFILES_DIR/${profile}.json" "$AUTH_FILE" 2>/dev/null
+        fi
+        return 1
+    fi
+
+    if [[ -z "$new_access_token" ]]; then
+        log "ERROR $profile: empty response"
+        if [[ "$profile" != "$current" ]]; then
+            cp "$PROFILES_DIR/${profile}.json" "$AUTH_FILE" 2>/dev/null
+        fi
+        return 1
+    fi
+
+    new_refresh_token=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('refresh_token', '$refresh_token'))" 2>/dev/null)
+    new_id_token=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id_token', ''))" 2>/dev/null)
+
+    python3 -c "
+import json
+from datetime import datetime, timezone
+
+f = '$auth_path'
+with open(f, 'r') as fh:
+    d = json.load(fh)
+
+d['tokens']['access_token'] = '$new_access_token'
+d['tokens']['refresh_token'] = '$new_refresh_token'
+if '$new_id_token':
+    d['tokens']['id_token'] = '$new_id_token'
+d['last_refresh'] = datetime.now(timezone.utc).isoformat()
+
+with open(f, 'w') as fh:
+    json.dump(d, fh, indent=2)
+"
+
+    log "OK $profile"
+
+    if [[ "$profile" != "$current" ]]; then
+        cp "$PROFILES_DIR/${profile}.json" "$AUTH_FILE" 2>/dev/null
+    fi
+
+    return 0
+}
+
+mkdir -p "$CODEX_DIR/logs"
+
+log "START refreshing all profiles"
+
+if [[ ! -d "$PROFILES_DIR" ]]; then
+    log "No profiles dir, nothing to refresh"
+    exit 0
+fi
+
+for f in "$PROFILES_DIR"/*.json; do
+    [[ -f "$f" ]] || continue
+    profile=$(basename "$f" .json)
+    if [[ "$profile" == ".current" ]]; then
+        continue
+    fi
+    refresh_profile "$profile"
+done
+
+log "DONE"

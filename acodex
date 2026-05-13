@@ -1,0 +1,299 @@
+#!/bin/bash
+# acodex — Codex account manager
+
+set -e
+
+CODEX_DIR="${CODEX_DIR:-$HOME/.codex}"
+PROFILES_DIR="$CODEX_DIR/profiles"
+CURRENT_FILE="$PROFILES_DIR/.current"
+AUTH_FILE="$CODEX_DIR/auth.json"
+BACKUP_DIR="$CODEX_DIR/backups"
+
+usage() {
+    cat <<'EOF'
+acodex — Codex account manager
+
+Usage:
+    acodex save [name]     Save current auth as profile (interactive if name omitted)
+    acodex list            List all saved profiles
+    acodex select [name]   Switch to profile (interactive if name omitted)
+    acodex delete <name>   Delete a profile
+    acodex remove <name>   Alias for delete
+    acodex current         Show current active account info
+    acodex help            Show this help
+
+Examples:
+    acodex save            Save with interactive name input
+    acodex save work       Save as 'work' profile
+    acodex select          Interactive profile picker
+    acodex select personal Switch to 'personal' profile
+    acodex delete old      Delete 'old' profile
+EOF
+}
+
+need_auth() {
+    if [[ ! -f "$AUTH_FILE" ]]; then
+        echo "Error: $AUTH_FILE not found"
+        exit 1
+    fi
+}
+
+python_email() {
+    python3 -c "
+import json, sys, base64
+try:
+    f = '$1'
+    id_token = json.load(open(f))['tokens']['id_token']
+    payload = id_token.split('.')[1]
+    payload += '=' * (4 - len(payload) % 4)
+    d = json.loads(base64.urlsafe_b64decode(payload))
+    print(d.get('email', 'unknown'))
+except: print('unknown')
+" 2>/dev/null
+}
+
+generate_name() {
+    local email
+    email=$(python_email "$AUTH_FILE")
+    if [[ "$email" == "unknown" ]]; then
+        echo "profile-$(date +%s)"
+    else
+        echo "$email" | sed 's/@.*//' | sed 's/[^a-zA-Z0-9]/_/g'
+    fi
+}
+
+get_profiles() {
+    local profiles=()
+    for f in "$PROFILES_DIR"/*.json; do
+        [[ -f "$f" ]] || continue
+        local name
+        name=$(basename "$f" .json)
+        if [[ "$name" == ".current" ]]; then
+            continue
+        fi
+        profiles+=("$name")
+    done
+    echo "${profiles[@]}"
+}
+
+interactive_select() {
+    local profiles
+    profiles=($(get_profiles))
+    local current
+    current=$(cat "$CURRENT_FILE" 2>/dev/null || echo "")
+
+    if [[ ${#profiles[@]} -eq 0 ]]; then
+        echo "No profiles saved. Use 'acodex save' first."
+        exit 1
+    fi
+
+    if [[ ${#profiles[@]} -eq 1 ]]; then
+        cmd_select "${profiles[0]}"
+        return
+    fi
+
+    local selected=0
+    local key
+
+    while true; do
+        clear
+        echo -e "\n  Select profile:\n"
+
+        for i in "${!profiles[@]}"; do
+            if [[ $i -eq $selected ]]; then
+                echo -e "  \033[36m▶ ${profiles[$i]}\033[0m"
+            else
+                echo -e "    ${profiles[$i]}"
+            fi
+            if [[ "${profiles[$i]}" == "$current" ]]; then
+                echo -e "      \033[90m(current)\033[0m"
+            else
+                echo
+            fi
+        done
+
+        echo -e "\n  \033[90m↑↓ navigate  Enter select  Esc cancel\033[0m"
+
+        read -s -n 1 key
+
+        if [[ "$key" == $'\e' ]]; then
+            read -s -n 2 -t 0.1 rest
+            local esc_seq="$key$rest"
+            if [[ "$esc_seq" == $'\e[A' ]]; then
+                ((selected--))
+                [[ $selected -lt 0 ]] && selected=$((${#profiles[@]} - 1))
+            elif [[ "$esc_seq" == $'\e[B' ]]; then
+                ((selected++))
+                [[ $selected -ge ${#profiles[@]} ]] && selected=0
+            elif [[ "$esc_seq" == $'\e' ]]; then
+                echo -e "\n\033[90mCancelled.\033[0m"
+                exit 0
+            fi
+        elif [[ "$key" == "" ]]; then
+            break
+        fi
+    done
+
+    cmd_select "${profiles[$selected]}"
+}
+
+cmd_save() {
+    need_auth
+
+    local name="$1"
+
+    if [[ -z "$name" ]]; then
+        echo -n "Profile name (Enter for auto-generate from email): "
+        read -r name
+        if [[ -z "$name" ]]; then
+            name=$(generate_name)
+            echo "Auto-generated name: $name"
+        fi
+    fi
+
+    local target="$PROFILES_DIR/${name}.json"
+
+    if [[ -f "$target" ]]; then
+        echo -n "Profile '$name' exists. Overwrite? [y/N] "
+        read -r confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            echo "Aborted."
+            exit 0
+        fi
+    fi
+
+    mkdir -p "$PROFILES_DIR"
+    cp "$AUTH_FILE" "$target"
+    echo "$name" > "$CURRENT_FILE"
+
+    local email
+    email=$(python_email "$AUTH_FILE")
+    echo "Saved current auth as '$name'"
+    echo "  Email: $email"
+}
+
+cmd_list() {
+    if [[ ! -d "$PROFILES_DIR" ]] || [[ -z "$(ls -A "$PROFILES_DIR" 2>/dev/null | grep -v '^\.')" ]]; then
+        echo "No profiles saved."
+        exit 0
+    fi
+
+    local current
+    current=$(cat "$CURRENT_FILE" 2>/dev/null || echo "")
+
+    echo "Profiles:"
+    for f in "$PROFILES_DIR"/*.json; do
+        [[ -f "$f" ]] || continue
+        local name
+        name=$(basename "$f" .json)
+
+        local email
+        email=$(python_email "$f")
+
+        local marker=""
+        [[ "$name" == "$current" ]] && marker=" (current)"
+
+        echo "  $name$marker"
+        echo "    Email: $email"
+    done
+}
+
+cmd_select() {
+    if [[ -z "$1" ]]; then
+        interactive_select
+        return
+    fi
+
+    local name="$1"
+    local source="$PROFILES_DIR/${name}.json"
+
+    if [[ ! -f "$source" ]]; then
+        echo "Error: Profile '$name' not found."
+        exit 1
+    fi
+
+    mkdir -p "$BACKUP_DIR"
+    local backup="$BACKUP_DIR/auth-$(date +%Y%m%d-%H%M%S).json"
+    cp "$AUTH_FILE" "$backup"
+    echo "Backup saved: $backup"
+
+    cp "$source" "$AUTH_FILE"
+    echo "$name" > "$CURRENT_FILE"
+
+    local email
+    email=$(python_email "$AUTH_FILE")
+    echo "Switched to profile '$name'"
+    echo "  Email: $email"
+}
+
+cmd_delete() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: acodex delete <name>"
+        exit 1
+    fi
+
+    local name="$1"
+    local target="$PROFILES_DIR/${name}.json"
+
+    if [[ ! -f "$target" ]]; then
+        echo "Error: Profile '$name' not found."
+        exit 1
+    fi
+
+    local current
+    current=$(cat "$CURRENT_FILE" 2>/dev/null || echo "")
+
+    if [[ "$name" == "$current" ]]; then
+        echo "Error: Cannot delete currently active profile. Use 'acodex select <other>' first."
+        exit 1
+    fi
+
+    rm "$target"
+    echo "Deleted profile '$name'."
+}
+
+cmd_current() {
+    need_auth
+
+    if [[ -f "$CURRENT_FILE" ]]; then
+        local name
+        name=$(cat "$CURRENT_FILE")
+        echo "Active profile: $name"
+    else
+        echo "No profile selected (using default auth.json)"
+    fi
+
+    local email
+    email=$(python_email "$AUTH_FILE")
+    echo "Email: $email"
+
+    local account_id
+    account_id=$(python3 -c "import json; print(json.load(open('$AUTH_FILE'))['tokens'].get('account_id', 'unknown'))" 2>/dev/null || echo "unknown")
+    echo "Account ID: $account_id"
+
+    local last_refresh
+    last_refresh=$(python3 -c "import json; print(json.load(open('$AUTH_FILE')).get('last_refresh', 'unknown'))" 2>/dev/null || echo "unknown")
+    echo "Last refresh: $last_refresh"
+}
+
+main() {
+    if [[ $# -eq 0 ]]; then
+        usage
+        exit 0
+    fi
+
+    local cmd="$1"
+    shift
+
+    case "$cmd" in
+        save) cmd_save "$@" ;;
+        list) cmd_list ;;
+        select) cmd_select "$@" ;;
+        delete|remove) cmd_delete "$@" ;;
+        current) cmd_current ;;
+        help|--help|-h) usage ;;
+        *) echo "Unknown command: $cmd"; usage; exit 1 ;;
+    esac
+}
+
+main "$@"
