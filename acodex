@@ -92,49 +92,32 @@ interactive_select() {
         return
     fi
 
-    local selected=0
-    local key
+    echo -e "\n  Select profile:\n"
 
-    while true; do
-        clear
-        echo -e "\n  Select profile:\n"
-
-        for i in "${!profiles[@]}"; do
-            if [[ $i -eq $selected ]]; then
-                echo -e "  \033[36m▶ ${profiles[$i]}\033[0m"
-            else
-                echo -e "    ${profiles[$i]}"
-            fi
-            if [[ "${profiles[$i]}" == "$current" ]]; then
-                echo -e "      \033[90m(current)\033[0m"
-            else
-                echo
-            fi
-        done
-
-        echo -e "\n  \033[90m↑↓ navigate  Enter select  Esc cancel\033[0m"
-
-        read -s -n 1 key
-
-        if [[ "$key" == $'\e' ]]; then
-            read -s -n 2 -t 0.1 rest
-            local esc_seq="$key$rest"
-            if [[ "$esc_seq" == $'\e[A' ]]; then
-                ((selected--))
-                [[ $selected -lt 0 ]] && selected=$((${#profiles[@]} - 1))
-            elif [[ "$esc_seq" == $'\e[B' ]]; then
-                ((selected++))
-                [[ $selected -ge ${#profiles[@]} ]] && selected=0
-            elif [[ "$esc_seq" == $'\e' ]]; then
-                echo -e "\n\033[90mCancelled.\033[0m"
-                exit 0
-            fi
-        elif [[ "$key" == "" ]]; then
-            break
-        fi
+    for i in "${!profiles[@]}"; do
+        echo -e "  \033[36m[$((i+1))]\033[0m ${profiles[$i]}$([[ "${profiles[$i]}" == "$current" ]] && echo -e " \033[90m(current)\033[0m" || echo)"
     done
 
-    cmd_select "${profiles[$selected]}"
+    echo -e "\n  \033[90mEnter number or name\033[0m"
+    echo -n "  > "
+    read -r choice
+
+    if [[ -z "$choice" ]]; then
+        echo -e "\033[90mCancelled.\033[0m"
+        exit 0
+    fi
+
+    if [[ "$choice" =~ ^[0-9]+$ ]]; then
+        local idx=$((choice - 1))
+        if [[ $idx -ge 0 && $idx -lt ${#profiles[@]} ]]; then
+            cmd_select "${profiles[$idx]}"
+        else
+            echo -e "\033[91mInvalid number.\033[0m"
+            exit 1
+        fi
+    else
+        cmd_select "$choice"
+    fi
 }
 
 cmd_save() {
