@@ -14,15 +14,17 @@ usage() {
 acodex — Codex account manager
 
 Usage:
-    acodex save [name]     Save current auth as profile (interactive if name omitted)
-    acodex list            List all saved profiles
-    acodex select [name]   Switch to profile (interactive if name omitted)
-    acodex delete <name>   Delete a profile
-    acodex remove <name>   Alias for delete
-    acodex current         Show current active account info
-    acodex help            Show this help
+    acodex login          Remove auth.json and generate login link
+    acodex save [name]    Save current auth as profile (interactive if name omitted)
+    acodex list           List all saved profiles
+    acodex select [name]  Switch to profile (interactive if name omitted)
+    acodex delete <name>  Delete a profile
+    acodex remove <name>  Alias for delete
+    acodex current        Show current active account info
+    acodex help           Show this help
 
 Examples:
+    acodex login           Remove auth and get login link
     acodex save            Save with interactive name input
     acodex save work       Save as 'work' profile
     acodex select          Interactive profile picker
@@ -118,6 +120,16 @@ interactive_select() {
     else
         cmd_select "$choice"
     fi
+}
+
+cmd_login() {
+    if [[ -f "$AUTH_FILE" ]]; then
+        echo "Removing $AUTH_FILE..."
+        rm -f "$AUTH_FILE"
+    fi
+
+    echo -e "\033[36mStarting Codex device login...\033[0m\n"
+    codex login --device-auth
 }
 
 cmd_save() {
@@ -269,6 +281,7 @@ main() {
     shift
 
     case "$cmd" in
+        login) cmd_login ;;
         save) cmd_save "$@" ;;
         list) cmd_list ;;
         select) cmd_select "$@" ;;
