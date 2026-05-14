@@ -130,6 +130,14 @@ cmd_login() {
 
     echo -e "\033[36mStarting Codex login...\033[0m\n"
     codex login
+
+    if [[ ! -f "$AUTH_FILE" ]]; then
+        echo -e "\033[91mLogin failed or auth.json not created.\033[0m"
+        exit 1
+    fi
+
+    echo
+    cmd_save
 }
 
 cmd_save() {
