@@ -128,28 +128,8 @@ cmd_login() {
         rm -f "$AUTH_FILE"
     fi
 
-    python3 << 'PYEOF'
-import secrets, base64, hashlib, urllib.parse, sys
-
-code_verifier = secrets.token_urlsafe(64)
-code_challenge = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode()).digest()).decode().rstrip('=')
-
-params = urllib.parse.urlencode({
-    'client_id': 'app_EMoaEEZ73f0CkXaXp7hranN',
-    'redirect_uri': 'http://localhost:8080',
-    'response_type': 'code',
-    'scope': 'openid profile email offline_access ai.model.access',
-    'code_challenge_method': 'S256',
-    'code_challenge': code_challenge
-})
-
-url = 'https://auth.openai.com/oauth/authorize?' + params
-print(url)
-PYEOF
-
-    echo -e "\n\033[90mCopy this link and open in your browser.\033[0m"
-    echo -e "\033[90mAfter login, Codex will auto-detect and store auth.json.\033[0m"
-    echo -e "\033[90mThen run 'acodex save <name>' to save the account.\033[0m"
+    echo -e "\033[36mStarting Codex login...\033[0m\n"
+    codex login
 }
 
 cmd_save() {
